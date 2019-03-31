@@ -243,6 +243,25 @@ rp(options)
     });
 ```
 
+### Stream the response
+
+``` js
+var options = {
+    uri: 'http://my-server/big-file.zip',
+    pause: true,
+};
+
+rp(options)
+    .then(function (response) {
+        console.log("Downloading %s bytes file...", response.headers["content-length"]);
+        response.pipe(fs.createWriteStream("downloaded.zip"));
+        response.on("end", () => console.log("Downloaded."));
+    })
+    .catch(function (err) {
+        // Request failed...
+    });
+```
+
 ### Get a rejection only if the request failed for technical reasons
 
 ``` js
@@ -273,7 +292,7 @@ Consider Request-Promise being:
 
 - A Request object
 	- With an [identical API](https://github.com/request/request): `require('request-promise') == require('request')` so to say
-	- However, **STREAMING THE RESPONSE** (e.g. `.pipe(...)`) is **DISCOURAGED** because Request-Promise would grow the memory footprint for large requests unnecessarily high. Use the original Request library for that. You can use both libraries in the same project.
+	- However, **STREAMING THE RESPONSE** (e.g. `rp(...).pipe(...)`) is **DISCOURAGED** because Request-Promise would grow the memory footprint for large requests unnecessarily high. Set the `pause` option and wait for the promise to resolve, or use the original Request library if you need to stream without waiting. You can use both libraries in the same project.
 - Plus some methods on a request call object:
 	- `rp(...).then(...)` or e.g. `rp.post(...).then(...)` which turn `rp(...)` and `rp.post(...)` into promises
 	- `rp(...).catch(...)` or e.g. `rp.del(...).catch(...)` which is the same method as provided by Bluebird promises
@@ -286,6 +305,9 @@ Consider Request-Promise being:
 	- `resolveWithFullResponse = false` which is a boolean to set whether the promise should be resolved with the full response or just the response body
 	- `transform` which takes a function to transform the response into a custom value with which the promise is resolved
 	- `transform2xxOnly = false` which is a boolean to set whether the transform function is applied to all responses or only to those with a 2xx status code
+	- `pause = false` which is a boolean that when set, the promise will be resolved with the raw response stream ([`http.IncomingMessage`](https://nodejs.org/docs/latest/api/http.html#http_class_http_incomingmessage)) before the body arrives (e.g. when the `response` event fires). Implies `resolveWithFullResponse = true` and `transform = null`.
+		- **Note:** The stream will be **paused** before the promise resolves, so that you can pipe or subscribe to the stream before any data gets lost. `.pipe()` and others resume it automatically, otherwise you may need to call `.resume()` manually, **even if you do nothing else with the stream**.
+		- **Note 2:** You don't need to do anything if the promise rejects, as the stream is not paused. But this means **it's unsafe to stream the response in that case**, as data might get lost.
 
 The objects returned by request calls like `rp(...)` or e.g. `rp.post(...)` are regular Promises/A+ compliant promises and can be assimilated by any compatible promise library.
 
@@ -470,6 +492,45 @@ rp('http://google.com')
     .catch(errors.RequestError, function (reason) {
         // The request failed due to technical reasons.
         // reason.cause is the Error object Request would pass into a callback.
+	});
+```
+
+### Fullfilled promises and the `pause` option
+
+```
+var errors = require('request-promise/errors');
+
+rp({ uri: 'http://my-server/big-file.zip', pause: true })
+	.then(function (response) {
+		console.log("Downloading:", response.headers["content-type"]);
+		// Always resume the response (pipe does it automatically) to avoid memory leaks
+		response.pipe(fs.createWriteStream("downloaded.zip"));
+		response.on("end", () => console.log("Downloaded"));
+	})
+	.catch(errors.StatusCodeError, function (reason) {
+		// The server responded with a status codes other than 2xx.
+		// Check reason.statusCode
+	})
+	.catch(errors.RequestError, function (reason) {
+		// The request failed due to technical reasons.
+		// reason.cause is the Error object Request would pass into a callback.
+	});
+```
+
+### Using `pause` together with `simple = false`
+
+```
+var errors = require('request-promise/errors');
+
+rp({ uri: 'http://google.com', pause: true, simple: false })
+	.then(function (response) {
+		console.log("Status code:", response.statusCode);
+		// Always resume the response (pipe does it automatically) to avoid memory leaks
+		response.resume();
+	})
+	.catch(errors.RequestError, function (reason) {
+		// The request failed due to technical reasons.
+		// reason.cause is the Error object Request would pass into a callback.
 	});
 ```
 
